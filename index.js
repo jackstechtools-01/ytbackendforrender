@@ -1,65 +1,52 @@
-// index.js
 import express from 'express';
-import fetch from 'node-fetch';
+import ytdl from 'ytdl-core';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// mimic a real browser
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+// CORS so frontend can access it from Google Sites
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
 
-// Helper: parse ytInitialPlayerResponse from page HTML
-function parsePlayerResponse(html){
-  let m;
-  // standard embedded JSON
-  m = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;/s);
-  if(m){ try { return JSON.parse(m[1]); } catch(e){} }
+// simple ping route
+app.get('/', (req, res) => {
+  res.send('YT Downloader backend running!');
+});
 
-  // fallback ytplayer.config
-  m = html.match(/ytplayer\.config\s*=\s*({.+?});/s);
-  if(m){ 
-    try { 
-      const cfg = JSON.parse(m[1]); 
-      if(cfg.args && cfg.args.player_response) return JSON.parse(cfg.args.player_response); 
-    } catch(e){}
-  }
-
-  return null;
-}
-
-// main fetch endpoint
-app.get('/fetch', async (req,res)=>{
+// fetch YouTube formats
+app.get('/fetch', async (req, res) => {
   const { url, id } = req.query;
-  let watchUrl = url || (id ? `https://www.youtube.com/watch?v=${id}` : null);
+  const videoUrl = url || (id ? `https://www.youtube.com/watch?v=${id}` : null);
 
-  if(!watchUrl) return res.status(400).json({error: 'Provide url or id'});
+  if (!videoUrl) return res.status(400).json({ error: 'Provide a YouTube URL or ID' });
 
   try {
-    // fetch YouTube watch page server-side
-    const r = await fetch(watchUrl, { headers: {'User-Agent': USER_AGENT} });
-    const html = await r.text();
+    // fetch video info via ytdl-core
+    const info = await ytdl.getInfo(videoUrl);
 
-    const player = parsePlayerResponse(html);
+    // get all audio+video formats
+    const formats = ytdl.filterFormats(info.formats, 'audioandvideo');
 
-    // add CORS headers so frontend can call this anywhere
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    // simplify the data for frontend
+    const simplified = formats.map(f => ({
+      quality: f.qualityLabel || f.audioQuality || 'Unknown',
+      mimeType: f.mimeType,
+      url: f.url
+    }));
 
     res.json({
       ok: true,
-      watchUrl,
-      player,
+      title: info.videoDetails.title,
+      formats: simplified
     });
 
-  } catch(e){
-    res.status(500).json({error: String(e)});
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
   }
 });
 
-// optional: simple ping endpoint
-app.get('/', (req,res)=>{
-  res.send('YT Fetcher is running. Use /fetch?url=<youtube_watch_url> or /fetch?id=<VIDEOID>');
-});
-
-app.listen(PORT, ()=>console.log(`Render YT Fetcher running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Render YT Downloader running on port ${PORT}`));
